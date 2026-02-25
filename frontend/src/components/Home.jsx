@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/resizable"
 
 import { Document, Page, pdfjs } from "react-pdf"
+import PullLamp  from "./lamp"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min?url"
 
 import "react-pdf/dist/Page/AnnotationLayer.css"
@@ -17,11 +18,17 @@ function Home() {
   const [theme, setTheme] = useState("light")
 
   // PDF states
+  const [scale, setScale] = useState(1)
   const [file, setFile] = useState(null)
   const [numPages, setNumPages] = useState(null)
   const [pageNumber, setPageNumber] = useState(1)
   const [pdfWidth, setPdfWidth] = useState(0)
-
+  const [searchText, setSearchText] = useState("")
+  const [matchPositions, setMatchPositions] = useState([])
+  const [currentMatch, setCurrentMatch] = useState(0)
+  const [pdfTextIndex, setPdfTextIndex] = useState({})
+  
+  const pageMatchCounter = useRef(0)
   const pdfContainerRef = useRef(null)
 
   // Theme load
@@ -43,6 +50,52 @@ function Home() {
     setTheme(newTheme)
     localStorage.setItem("theme", newTheme)
     document.documentElement.classList.toggle("dark", newTheme === "dark")
+  }
+
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const escapeHtml = (value) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;")
+
+  const highlightText = (textItem) => {
+    if (!searchText) return textItem.str
+
+    const regex = new RegExp(escapeRegExp(searchText), "gi")
+    let lastIndex = 0
+    let rendered = ""
+    let match
+
+    while ((match = regex.exec(textItem.str)) !== null) {
+      const start = match.index
+      const end = start + match[0].length
+      const currentOnPage = pageMatchCounter.current++
+      const activeMatch = matchPositions[currentMatch]
+      const activeMatchOnPageIndex =
+        activeMatch?.page === pageNumber
+          ? matchPositions
+              .slice(0, currentMatch + 1)
+              .filter((m) => m.page === pageNumber).length - 1
+          : -1
+      const isActive = currentOnPage === activeMatchOnPageIndex
+
+      rendered += escapeHtml(textItem.str.slice(lastIndex, start))
+      rendered += isActive
+        ? `<mark class="bg-orange-400 text-black px-[1px] rounded">${escapeHtml(match[0])}</mark>`
+        : escapeHtml(match[0])
+
+      lastIndex = end
+
+      if (regex.lastIndex === match.index) {
+        regex.lastIndex += 1
+      }
+    }
+
+    rendered += escapeHtml(textItem.str.slice(lastIndex))
+    return rendered
   }
 
   // Resize observer for responsive PDF width
@@ -85,15 +138,38 @@ function Home() {
 
   // Persist page number whenever it changes
   useEffect(() => {
-    if (file) {
-      localStorage.setItem("pdf_page", String(pageNumber))
-    }
-  }, [pageNumber, file])
+      if (file) {
+        localStorage.setItem("pdf_page", String(pageNumber))
+      }
+    }, [pageNumber, file])
 
-  // PDF handlers
-  const onDocumentLoadSuccess = ({ numPages }) => {
-    setNumPages(numPages)
-    // Don't reset to page 1 here — let restored page persist
+ useEffect(() => {
+  if (!searchText) return
+
+  const el = document.querySelector("mark")
+  if (el) {
+    setTimeout(() => {
+      el.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      })
+    }, 100)
+  }
+}, [currentMatch, pageNumber, searchText])
+    // PDF handlers
+  const onDocumentLoadSuccess = async (pdf) => {
+    setNumPages(pdf.numPages)
+
+    const index = {}
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p)
+      const textContent = await page.getTextContent()
+
+      index[p] = textContent.items.map((item) => item.str)
+    }
+
+    setPdfTextIndex(index)
   }
 
   const nextPage = () => setPageNumber((p) => Math.min(p + 1, numPages))
@@ -128,6 +204,50 @@ function Home() {
     localStorage.removeItem("pdf_name")
     localStorage.removeItem("pdf_page")
   }
+
+ useEffect(() => {
+  if (!searchText || !pdfTextIndex) {
+    setMatchPositions([])
+    return
+  }
+
+  const results = []
+  let counter = 0
+  const lowerSearch = searchText.toLowerCase()
+
+  Object.entries(pdfTextIndex).forEach(([page, texts]) => {
+    texts.forEach((text, i) => {
+      const lowerText = text.toLowerCase()
+      let startIndex = 0
+
+      while (true) {
+        const found = lowerText.indexOf(lowerSearch, startIndex)
+        if (found === -1) break
+
+        results.push({
+          page: Number(page),
+          index: i,
+          globalIndex: counter++,
+        })
+
+        startIndex = found + lowerSearch.length
+      }
+    })
+  })
+
+  setMatchPositions(results)
+  setCurrentMatch(0)
+}, [searchText, pdfTextIndex])
+
+useEffect(() => {
+  if (!matchPositions.length) return
+
+  const match = matchPositions[currentMatch]
+  if (match && match.page !== pageNumber) {
+    setPageNumber(match.page)
+  }
+}, [currentMatch, matchPositions])
+  pageMatchCounter.current = 0
 
   return (
     <div className="h-screen w-screen p-4 bg-gradient-to-br from-indigo-100 via-sky-100 to-purple-100 
@@ -202,6 +322,57 @@ function Home() {
                       ✕
                     </button>
                   </div>
+                  <div className="shrink-0 flex gap-2 items-center">
+                    <input
+                      type="text"
+                      placeholder="Search in PDF..."
+                      value={searchText}
+                      onChange={(e) => {
+                        setSearchText(e.target.value)
+                        setCurrentMatch(0)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || !matchPositions.length) return
+                        e.preventDefault()
+
+                        setCurrentMatch((m) => {
+                          if (e.shiftKey) {
+                            return m <= 0 ? matchPositions.length - 1 : m - 1
+                          }
+                          return m >= matchPositions.length - 1 ? 0 : m + 1
+                        })
+                      }}
+                      className="flex-1 px-2 py-1 rounded-lg bg-white/60 dark:bg-white/10 text-xs"
+                    />
+
+                    <button
+                      onClick={() =>
+                        setCurrentMatch((m) =>
+                          Math.max(0, m - 1)
+                        )
+                      }
+                      className="px-2 py-1 text-xs rounded bg-indigo-100 dark:bg-white/10"
+                    >
+                      ↑
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        setCurrentMatch((m) =>
+                          Math.min(matchPositions.length - 1, m + 1)
+                        )
+                      }
+                      className="px-2 py-1 text-xs rounded bg-indigo-100 dark:bg-white/10"
+                    >
+                      ↓
+                    </button>
+
+                    <span className="text-[10px] px-1">
+                      {matchPositions.length
+                        ? `${currentMatch + 1}/${matchPositions.length}`
+                        : "0"}
+                    </span>
+                  </div>
 
                   {/* PDF CONTAINER — flex-1 + min-h-0 keeps it from overflowing */}
                   <div
@@ -211,41 +382,79 @@ function Home() {
                   >
                     <Document file={file} onLoadSuccess={onDocumentLoadSuccess}>
                       <Page
+                        key={`${pageNumber}-${searchText}-${currentMatch}`}
                         pageNumber={pageNumber}
                         width={pdfWidth}
+                        scale={scale}
                         renderTextLayer={true}
                         renderAnnotationLayer={true}
+                        customTextRenderer={highlightText}
                       />
                     </Document>
                   </div>
 
                   {/* CONTROLS — always visible, pinned at bottom */}
-                  <div className="shrink-0 flex items-center justify-between w-full
-                  px-1 py-1 text-xs text-indigo-700 dark:text-indigo-300">
-                    <button
-                      onClick={prevPage}
-                      disabled={pageNumber <= 1}
-                      className="px-3 py-1 rounded-lg bg-indigo-100 dark:bg-white/10 
-                      disabled:opacity-30 hover:bg-indigo-200 dark:hover:bg-white/20 
-                      transition-colors font-medium"
-                    >
-                      ‹ Prev
-                    </button>
+                  <div className="shrink-0 w-full px-1 py-1 text-xs text-indigo-700 dark:text-indigo-300">
+                  <div className="grid grid-cols-3 items-center w-full">
 
-                    <span className="text-[11px] tabular-nums">
-                      {pageNumber} / {numPages || "--"}
-                    </span>
+                    {/* LEFT — Prev */}
+                    <div className="flex justify-start">
+                      <button
+                        onClick={prevPage}
+                        disabled={pageNumber <= 1}
+                        className="px-3 py-1 rounded-lg bg-indigo-100 dark:bg-white/10 
+                        disabled:opacity-30 hover:bg-indigo-200 dark:hover:bg-white/20 
+                        transition-colors font-medium"
+                      >
+                        ‹ Prev
+                      </button>
+                    </div>
 
-                    <button
-                      onClick={nextPage}
-                      disabled={pageNumber >= numPages}
-                      className="px-3 py-1 rounded-lg bg-indigo-100 dark:bg-white/10 
-                      disabled:opacity-30 hover:bg-indigo-200 dark:hover:bg-white/20 
-                      transition-colors font-medium"
-                    >
-                      Next ›
-                    </button>
+                    {/* CENTER — Page number */}
+                    <div className="flex justify-center">
+                      <span className="text-[11px] tabular-nums">
+                        {pageNumber} / {numPages || "--"}
+                      </span>
+                    </div>
+
+                    {/* RIGHT — Zoom + Next */}
+                    <div className="flex justify-end items-center gap-2">
+
+                      {/* Zoom */}
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setScale((s) => Math.max(0.5, s - 0.1))}
+                          className="px-2 py-1 rounded bg-indigo-100 dark:bg-white/10"
+                        >
+                          −
+                        </button>
+
+                        <span className="text-[10px] w-10 text-center">
+                          {(scale * 100).toFixed(0)}%
+                        </span>
+
+                        <button
+                          onClick={() => setScale((s) => Math.min(3, s + 0.1))}
+                          className="px-2 py-1 rounded bg-indigo-100 dark:bg-white/10"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* Next */}
+                      <button
+                        onClick={nextPage}
+                        disabled={pageNumber >= numPages}
+                        className="px-3 py-1 rounded-lg bg-indigo-100 dark:bg-white/10 
+                        disabled:opacity-30 hover:bg-indigo-200 dark:hover:bg-white/20 
+                        transition-colors font-medium"
+                      >
+                        Next ›
+                      </button>
+                    </div>
+
                   </div>
+                </div>
                 </>
               )}
             </div>
@@ -264,6 +473,7 @@ function Home() {
               <h1 className="font-semibold text-indigo-700 dark:text-indigo-300">
                 🤖 Ai Chat
               </h1>
+              
 
               {/* 💡 LAMP TOGGLE */}
               <div className="relative flex items-start justify-center w-16 h-12">
@@ -290,6 +500,7 @@ function Home() {
                 />
               </div>
             </div>
+            
 
             <div className="flex-1 p-2" />
           </ResizablePanel>
