@@ -6,8 +6,9 @@ import {
 } from "@/components/ui/resizable"
 
 import { Document, Page, pdfjs } from "react-pdf"
-import PullLamp  from "./lamp"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min?url"
+import { Lightbulb } from "@theme-toggles/react"
+import "@theme-toggles/react/css/Lightbulb.css"
 
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
@@ -30,6 +31,19 @@ function Home() {
   
   const pageMatchCounter = useRef(0)
   const pdfContainerRef = useRef(null)
+  const panelGroupRef = useRef(null)
+  const [panelLayout, setPanelLayout] = useState([50, 50])
+  const [panelDefaults, setPanelDefaults] = useState([50, 50])
+  const [layoutVersion, setLayoutVersion] = useState(0)
+  const PANEL_LEFT_MIN = 18
+  const PANEL_LEFT_MAX = 60
+
+  //chat state 
+  const [messages,setMessages] = useState([])
+  const [chatInput,setChatInput] = useState("")
+  const [isSending,setIsSending] = useState(false)
+  const chatBottomRef = useRef(null)
+  const streamAbortRef = useRef(null)
 
   // Theme load
   useEffect(() => {
@@ -249,19 +263,220 @@ useEffect(() => {
 }, [currentMatch, matchPositions])
   pageMatchCounter.current = 0
 
+  //Intial assistant message
+  useEffect(()=>{
+    setMessages([
+      {
+        id:crypto.randomUUID(),
+        role:"assistant",
+        content:"Hi,what do you need help with today?",
+        status:"done",
+        createdAt:Date.now(),
+      }
+    ])
+  },[])
+
+  //Auto scroll to latest message
+
+  useEffect(()=>{
+    chatBottomRef.current?.scrollIntoView({behavior:"smooth"})
+  },[messages])
+
+  // Mock streaming method
+  const streamAssistantReply = async({prompt,onChunk,signal}) =>{
+      const demo =
+      "Sure. I can help with that.\n\nI will analyze your PDF context and provide a clear answer with steps."
+      const chunks = demo.split(" ")
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
+        await new Promise((r) => setTimeout(r, 80))
+        onChunk((i === 0 ? "" : " ") + chunks[i])
+      }
+  }
+
+  const sendMessage = async () => {
+      const text = chatInput.trim()
+      if (!text || isSending) return
+
+      const userMsg = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        status: "done",
+        createdAt: Date.now(),
+      }
+
+      const assistantId = crypto.randomUUID()
+      const assistantMsg = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        status: "streaming",
+        createdAt: Date.now(),
+      }
+
+      setMessages((prev) => [...prev, userMsg, assistantMsg])
+      setChatInput("")
+      setIsSending(true)
+
+      const controller = new AbortController()
+      streamAbortRef.current = controller
+
+      try {
+        await streamAssistantReply({
+          prompt: text,
+          signal: controller.signal,
+          onChunk: (delta) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + delta } : m
+              )
+            )
+          },
+        })
+
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, status: "done" } : m))
+        )
+      } catch (err) {
+        if (err?.name !== "AbortError") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: "Something went wrong.", status: "done" }
+                : m
+            )
+          )
+        }
+      } finally {
+        setIsSending(false)
+        streamAbortRef.current = null
+      }
+    }
+
+  const applyPanelSizes = (leftSize) => {
+    if (Number.isNaN(leftSize)) return
+
+    const left = Math.max(PANEL_LEFT_MIN, Math.min(PANEL_LEFT_MAX, leftSize))
+    const right = 100 - left
+    setPanelLayout([left, right])
+    setPanelDefaults([left, right])
+    setLayoutVersion((v) => v + 1)
+    panelGroupRef.current?.setLayout?.([left, right])
+  }
+
+  const formatChatTime = (timestamp) =>
+    new Date(timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+
+  const renderAvatar = (role) => {
+    const isUser = role === "user"
+
+    return (
+      <div
+        className={`shrink-0 h-8 w-8 rounded-full flex items-center justify-center border ${
+          isUser
+            ? "bg-indigo-500 border-indigo-400 text-white"
+            : "bg-white dark:bg-slate-800 border-indigo-200 dark:border-white/15 text-indigo-600 dark:text-indigo-300"
+        }`}
+      >
+        {isUser ? (
+          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+            <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+            <path d="M12 2a8 8 0 0 0-8 8v3a2 2 0 0 0 2 2h1v3a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3h1a2 2 0 0 0 2-2v-3a8 8 0 0 0-8-8Zm-3 9a1 1 0 1 1 1-1 1 1 0 0 1-1 1Zm6 0a1 1 0 1 1 1-1 1 1 0 0 1-1 1Z" />
+          </svg>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen w-screen p-4 bg-gradient-to-br from-indigo-100 via-sky-100 to-purple-100 
     dark:from-[#0f172a] dark:via-[#020617] dark:to-[#020617] animate-gradient-x transition-colors duration-500">
 
       <div className="h-full w-full rounded-3xl border border-indigo-100/60 dark:border-white/10 
       bg-white/70 dark:bg-white/5 backdrop-blur-xl shadow-[0_10px_40px_rgba(99,102,241,0.15)] 
-      overflow-hidden transition-all duration-300">
+      overflow-hidden transition-all duration-300 flex flex-col">
 
-        <ResizablePanelGroup direction="horizontal" className="h-full w-full">
+        <div className="shrink-0 border-b border-indigo-100/70 dark:border-white/10 bg-white/50 dark:bg-white/[0.03] px-4 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                Panel Size
+              </span>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-indigo-600 dark:text-indigo-300/90">PDF</span>
+                <input
+                  type="number"
+                  min={PANEL_LEFT_MIN}
+                  max={PANEL_LEFT_MAX}
+                  value={Math.round(panelLayout[0])}
+                  onChange={(e) => applyPanelSizes(Number(e.target.value))}
+                  className="w-16 rounded-md border border-indigo-200/80 dark:border-white/15 bg-white/80 dark:bg-white/10 px-2 py-1 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">%</span>
+              </div>
+
+              <input
+                type="range"
+                min={PANEL_LEFT_MIN}
+                max={PANEL_LEFT_MAX}
+                value={panelLayout[0]}
+                onChange={(e) => applyPanelSizes(Number(e.target.value))}
+                className="w-40 accent-indigo-500"
+              />
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-indigo-600 dark:text-indigo-300/90">Chat</span>
+                <input
+                  type="number"
+                  min={100 - PANEL_LEFT_MAX}
+                  max={100 - PANEL_LEFT_MIN}
+                  value={Math.round(panelLayout[1])}
+                  onChange={(e) => applyPanelSizes(100 - Number(e.target.value))}
+                  className="w-16 rounded-md border border-indigo-200/80 dark:border-white/15 bg-white/80 dark:bg-white/10 px-2 py-1 text-xs text-slate-800 dark:text-slate-100 outline-none"
+                />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">%</span>
+              </div>
+            </div>
+
+            <div className="relative flex items-center justify-center w-14 h-10">
+              <div
+                className={`pointer-events-none absolute top-0 h-20 w-20 rounded-full blur-2xl transition-all duration-500 ${
+                  theme === "light"
+                    ? "bg-amber-300/40 opacity-100"
+                    : "bg-amber-300/0 opacity-0"
+                }`}
+              />
+
+              <Lightbulb
+                duration={750}
+                toggled={theme === "dark"}
+                toggle={toggleTheme}
+                className="text-3xl text-indigo-600 dark:text-indigo-200 p-1.5 rounded-full hover:bg-indigo-100/70 dark:hover:bg-white/10 transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
+        <ResizablePanelGroup
+          key={layoutVersion}
+          ref={panelGroupRef}
+          direction="horizontal"
+          className="flex-1 min-h-0 w-full"
+          onLayout={(sizes) => setPanelLayout(sizes)}
+        >
 
           {/* 📚 LEFT PANEL – PDF VIEWER */}
           <ResizablePanel
-            defaultSize={50}
+            defaultSize={panelDefaults[0]}
             minSize={18}
             className="flex flex-col min-h-0 bg-gradient-to-b from-indigo-50/80 to-white/60 
             dark:from-white/5 dark:to-white/0 backdrop-blur-md"
@@ -464,45 +679,80 @@ useEffect(() => {
           <ResizableHandle withHandle />
 
           {/* 🤖 RIGHT PANEL */}
-          <ResizablePanel defaultSize={50} minSize={40} className="flex flex-col">
+          <ResizablePanel defaultSize={panelDefaults[1]} minSize={40} className="flex flex-col">
 
             {/* HEADER */}
-            <div className="border-b border-indigo-100/70 dark:border-white/10 
-            px-6 py-4 flex items-center justify-between">
+            <div className="border-b border-indigo-100/70 dark:border-white/10 px-6 py-4">
 
               <h1 className="font-semibold text-indigo-700 dark:text-indigo-300">
                 🤖 Ai Chat
               </h1>
-              
-
-              {/* 💡 LAMP TOGGLE */}
-              <div className="relative flex items-start justify-center w-16 h-12">
-                <div
-                  className={`absolute top-4 h-24 w-24 rounded-full blur-2xl transition-all duration-500 ${
-                    theme === "dark" ? "bg-yellow-300/20" : "bg-indigo-300/20"
-                  }`}
-                />
-
-                <button
-                  onClick={toggleTheme}
-                  className="flex flex-col items-center group focus:outline-none"
-                >
-                  <div className="w-[2px] h-6 bg-gray-400 dark:bg-gray-500 group-active:h-9" />
-                  <div className="w-3 h-3 rounded-full bg-gray-500 dark:bg-gray-400 group-active:translate-y-1" />
-                </button>
-
-                <div
-                  className={`absolute top-6 w-10 h-6 rounded-b-full border
-                  ${theme === "dark"
-                    ? "bg-yellow-200 shadow-[0_0_25px_rgba(250,204,21,0.6)]"
-                    : "bg-indigo-200 shadow-[0_0_20px_rgba(99,102,241,0.4)]"
-                  }`}
-                />
-              </div>
             </div>
             
 
-            <div className="flex-1 p-2" />
+            <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-white/30 to-indigo-50/30 dark:from-white/[0.03] dark:to-white/[0.02]">
+              {/* Messages */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`w-full flex items-end gap-2 ${
+                      m.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    {m.role === "assistant" && renderAvatar("assistant")}
+
+                    <div className={`max-w-[82%] ${m.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
+                      <div
+                        className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm border ${
+                          m.role === "user"
+                            ? "bg-indigo-500 text-white border-indigo-400 rounded-br-md"
+                            : "bg-white/90 dark:bg-white/10 text-slate-800 dark:text-slate-100 border-indigo-100 dark:border-white/10 rounded-bl-md"
+                        }`}
+                      >
+                        {m.content || (m.status === "streaming" ? "Thinking..." : "")}
+                      </div>
+                      <span className="mt-1 px-1 text-[10px] text-slate-500 dark:text-slate-400">
+                        {formatChatTime(m.createdAt)}
+                      </span>
+                    </div>
+
+                    {m.role === "user" && renderAvatar("user")}
+                  </div>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Composer */}
+              <div className="shrink-0 border-t border-indigo-100/70 dark:border-white/10 p-3 bg-white/50 dark:bg-white/[0.03] backdrop-blur-sm">
+                <div className="flex items-end gap-2 rounded-2xl border border-indigo-100/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/40 p-2">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type your message..."
+                    rows={2}
+                    className="flex-1 resize-none rounded-xl px-3 py-2 text-sm bg-white/70 dark:bg-white/10 text-black dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-300 outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault()
+                        sendMessage()
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={isSending || !chatInput.trim()}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 disabled:hover:bg-indigo-500 transition-colors"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                      <path d="M3.4 20.4a1 1 0 0 1-1.33-1.26l2.2-6.35a1 1 0 0 0 0-.66l-2.2-6.27A1 1 0 0 1 3.4 4.6l17.8 6.4a1 1 0 0 1 0 1.88Z" />
+                    </svg>
+                    {isSending ? "Sending..." : "Send"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
