@@ -1,0 +1,5 @@
+llama-cpp-python
+pandas
+qdrant-client
+langchain-text-splitters
+sentence-transformers

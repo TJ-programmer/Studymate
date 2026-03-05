@@ -42,8 +42,11 @@ function Home() {
   const [messages,setMessages] = useState([])
   const [chatInput,setChatInput] = useState("")
   const [isSending,setIsSending] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState(null)
   const chatBottomRef = useRef(null)
   const streamAbortRef = useRef(null)
+  const streamBufferRef = useRef("")
+  const streamFrameRef = useRef(null)
 
   // Theme load
   useEffect(() => {
@@ -283,16 +286,39 @@ useEffect(() => {
   },[messages])
 
   // Mock streaming method
-  const streamAssistantReply = async({prompt,onChunk,signal}) =>{
-      const demo =
-      "Sure. I can help with that.\n\nI will analyze your PDF context and provide a clear answer with steps."
-      const chunks = demo.split(" ")
+  const streamAssistantReply = async ({ prompt, signal, onChunk }) => {
+    const response = await fetch("http://localhost:8001/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt }),
+      signal,
+    })
 
-      for (let i = 0; i < chunks.length; i++) {
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
-        await new Promise((r) => setTimeout(r, 80))
-        onChunk((i === 0 ? "" : " ") + chunks[i])
-      }
+    if (!response.ok) {
+      const errText = await response.text()
+      throw new Error(errText || `Request failed with status ${response.status}`)
+    }
+
+    if (!response.body) {
+      throw new Error("No stream returned")
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder("utf-8")
+
+    while (true) {
+      const { value, done } = await reader.read()
+
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      onChunk(chunk)
+    }
+
+    const finalChunk = decoder.decode()
+    if (finalChunk) onChunk(finalChunk)
   }
 
   const sendMessage = async () => {
@@ -324,22 +350,56 @@ useEffect(() => {
       streamAbortRef.current = controller
 
       try {
+        streamBufferRef.current = ""
+
+        const flushBufferedChunk = () => {
+          const delta = streamBufferRef.current
+          streamBufferRef.current = ""
+          streamFrameRef.current = null
+          if (!delta) return
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: m.content + delta } : m
+            )
+          )
+        }
+
         await streamAssistantReply({
           prompt: text,
           signal: controller.signal,
           onChunk: (delta) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: m.content + delta } : m
-              )
-            )
+            streamBufferRef.current += delta
+            if (streamFrameRef.current === null) {
+              streamFrameRef.current = requestAnimationFrame(flushBufferedChunk)
+            }
           },
         })
+
+        if (streamFrameRef.current !== null) {
+          cancelAnimationFrame(streamFrameRef.current)
+          streamFrameRef.current = null
+        }
+        if (streamBufferRef.current) {
+          const remaining = streamBufferRef.current
+          streamBufferRef.current = ""
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: m.content + remaining } : m
+            )
+          )
+        }
 
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, status: "done" } : m))
         )
       } catch (err) {
+        if (streamFrameRef.current !== null) {
+          cancelAnimationFrame(streamFrameRef.current)
+          streamFrameRef.current = null
+        }
+        streamBufferRef.current = ""
+
         if (err?.name !== "AbortError") {
           setMessages((prev) =>
             prev.map((m) =>
@@ -371,6 +431,178 @@ useEffect(() => {
       hour: "2-digit",
       minute: "2-digit",
     })
+
+  const renderHighlightedText = (text, keyPrefix) => {
+    const parts = text.split(
+      /(\b(?:Machine Learning|Artificial Intelligence|Training Data|Model|Prediction|Key Concepts|Important|Note)\b)/gi
+    )
+
+    return parts.map((part, idx) => {
+      if (
+        /^(Machine Learning|Artificial Intelligence|Training Data|Model|Prediction|Key Concepts|Important|Note)$/i.test(
+          part
+        )
+      ) {
+        return (
+          <mark
+            key={`${keyPrefix}-mark-${idx}`}
+            className="bg-amber-200/80 dark:bg-amber-300/30 text-slate-900 dark:text-amber-100 px-1 rounded"
+          >
+            {part}
+          </mark>
+        )
+      }
+      return <span key={`${keyPrefix}-txt-${idx}`}>{part}</span>
+    })
+  }
+
+  const renderInlineFormattedText = (text, keyPrefix) => {
+    const pieces = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean)
+
+    return pieces.map((piece, idx) => {
+      if (piece.startsWith("**") && piece.endsWith("**")) {
+        return (
+          <strong key={`${keyPrefix}-strong-${idx}`} className="font-semibold">
+            {piece.slice(2, -2)}
+          </strong>
+        )
+      }
+
+      if (piece.startsWith("`") && piece.endsWith("`")) {
+        return (
+          <code
+            key={`${keyPrefix}-code-${idx}`}
+            className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700/70 text-[0.92em]"
+          >
+            {piece.slice(1, -1)}
+          </code>
+        )
+      }
+
+      return renderHighlightedText(piece, `${keyPrefix}-plain-${idx}`)
+    })
+  }
+
+  const renderAssistantContent = (content) => {
+    const normalized = (content || "").replace(/\r\n/g, "\n")
+    const lines = normalized.split("\n")
+    const nodes = []
+    let paragraphBuffer = []
+    let orderedListBuffer = []
+    let unorderedListBuffer = []
+    let keyIndex = 0
+
+    const flushParagraph = () => {
+      if (!paragraphBuffer.length) return
+      const text = paragraphBuffer.join(" ").trim()
+      paragraphBuffer = []
+      if (!text) return
+      nodes.push(
+        <p key={`p-${keyIndex++}`} className="leading-relaxed">
+          {renderInlineFormattedText(text, `p-${keyIndex}`)}
+        </p>
+      )
+    }
+
+    const flushOrderedList = () => {
+      if (!orderedListBuffer.length) return
+      const items = orderedListBuffer
+      orderedListBuffer = []
+      nodes.push(
+        <ol key={`ol-${keyIndex++}`} className="list-decimal ml-5 space-y-1.5">
+          {items.map((item, itemIndex) => (
+            <li key={`li-${keyIndex}-${itemIndex}`} className="pl-1">
+              {renderInlineFormattedText(item, `li-${keyIndex}-${itemIndex}`)}
+            </li>
+          ))}
+        </ol>
+      )
+    }
+
+    const flushUnorderedList = () => {
+      if (!unorderedListBuffer.length) return
+      const items = unorderedListBuffer
+      unorderedListBuffer = []
+      nodes.push(
+        <ul key={`ul-${keyIndex++}`} className="list-disc ml-5 space-y-1.5">
+          {items.map((item, itemIndex) => (
+            <li key={`uli-${keyIndex}-${itemIndex}`} className="pl-1">
+              {renderInlineFormattedText(item, `uli-${keyIndex}-${itemIndex}`)}
+            </li>
+          ))}
+        </ul>
+      )
+    }
+
+    lines.forEach((rawLine) => {
+      const line = rawLine.trim()
+
+      if (!line) {
+        if (paragraphBuffer.length) flushParagraph()
+        flushOrderedList()
+        flushUnorderedList()
+        return
+      }
+
+      const headingMatch = line.match(/^(#{1,3})\s+(.*)$/)
+      if (headingMatch) {
+        flushParagraph()
+        flushOrderedList()
+        flushUnorderedList()
+        const level = headingMatch[1].length
+        const title = headingMatch[2]
+        const headingClass =
+          level === 1
+            ? "text-base font-bold"
+            : level === 2
+              ? "text-[15px] font-semibold"
+              : "text-sm font-semibold"
+
+        nodes.push(
+          <h3 key={`h-${keyIndex++}`} className={`${headingClass} text-indigo-700 dark:text-indigo-300`}>
+            {renderInlineFormattedText(title, `h-${keyIndex}`)}
+          </h3>
+        )
+        return
+      }
+
+      const orderedMatch = line.match(/^\d+\.\s+(.*)$/)
+      if (orderedMatch) {
+        flushParagraph()
+        flushUnorderedList()
+        orderedListBuffer.push(orderedMatch[1])
+        return
+      }
+
+      const unorderedMatch = line.match(/^[-*]\s+(.*)$/)
+      if (unorderedMatch) {
+        flushParagraph()
+        flushOrderedList()
+        unorderedListBuffer.push(unorderedMatch[1])
+        return
+      }
+
+      flushOrderedList()
+      flushUnorderedList()
+      paragraphBuffer.push(line)
+    })
+
+    flushParagraph()
+    flushOrderedList()
+    flushUnorderedList()
+
+    return nodes
+  }
+
+  const copyMessage = async (messageId, text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedMessageId(messageId)
+      setTimeout(() => setCopiedMessageId((id) => (id === messageId ? null : id)), 1400)
+    } catch (_err) {
+      setCopiedMessageId(null)
+    }
+  }
 
   const renderAvatar = (role) => {
     const isUser = role === "user"
@@ -710,7 +942,33 @@ useEffect(() => {
                             : "bg-white/90 dark:bg-white/10 text-slate-800 dark:text-slate-100 border-indigo-100 dark:border-white/10 rounded-bl-md"
                         }`}
                       >
-                        {m.content || (m.status === "streaming" ? "Thinking..." : "")}
+                        {m.role === "assistant" ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
+                                Answer
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => copyMessage(m.id, m.content)}
+                                className="text-[10px] px-2 py-0.5 rounded-md border border-indigo-200 dark:border-white/20 hover:bg-indigo-50 dark:hover:bg-white/10 transition-colors"
+                                disabled={!m.content}
+                              >
+                                {copiedMessageId === m.id ? "Copied ✅" : "Copy 📋"}
+                              </button>
+                            </div>
+
+                            <div className="space-y-2 break-words">
+                              {m.content
+                                ? renderAssistantContent(m.content)
+                                : m.status === "streaming"
+                                  ? "Thinking... 🤖"
+                                  : ""}
+                            </div>
+                          </div>
+                        ) : (
+                          m.content || ""
+                        )}
                       </div>
                       <span className="mt-1 px-1 text-[10px] text-slate-500 dark:text-slate-400">
                         {formatChatTime(m.createdAt)}
