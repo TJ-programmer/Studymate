@@ -125,32 +125,41 @@ from backend.core.rate_limiter import check_rate_limit
 class LLMService :
 
 
-    async def stream_llm_response(self,user_prompt: str):
-        
-         # 1 Rate limiting (implement after auth setup)
-        # if not check_rate_limit(user_id):
-        #     yield "Rate limit exceeded. Please wait."
-        #     return
+    async def stream_llm_response(self, messages):
 
-        # 2 cache
-        cached = get_cached(user_prompt)
+        import asyncio
+
+        def extract_last_user(messages):
+            return next(
+                (m["content"] for m in reversed(messages) if m["role"] == "user"),
+                ""
+            )
+
+        key_input = extract_last_user(messages)
+
+        # 1️⃣ Cache check
+        cached = get_cached(key_input)
         if cached:
-            # Keep UX consistent: cached replies should still stream incrementally.
             chunk_size = 24
             for i in range(0, len(cached), chunk_size):
                 yield cached[i:i + chunk_size]
+                await asyncio.sleep(0)
             return
-        
-        # 3 stream LLM
 
-        full_response= ""
+        # 2️⃣ Stream LLM
+        full_response = ""
 
-        for token in llm_response(user_prompt):
-            full_response += token
-            yield token
+        try:
+            for token in llm_response(messages):
+                if token:
+                    full_response += token
+                    yield token
+                    await asyncio.sleep(0)
 
+        except Exception:
+            yield "\n[Error generating response]"
+            return
 
-        # 4 save cache
-
-        set_cache(user_prompt,full_response)
-
+        # 3️⃣ Save cache
+        if full_response.strip() and len(full_response) < 5000:
+            set_cache(key_input, full_response)

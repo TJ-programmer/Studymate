@@ -4,11 +4,12 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-
+import { RotateCw } from 'lucide-react';
 import { Document, Page, pdfjs } from "react-pdf"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min?url"
 import { Lightbulb } from "@theme-toggles/react"
 import "@theme-toggles/react/css/Lightbulb.css"
+
 
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
@@ -47,7 +48,7 @@ function Home() {
   const streamAbortRef = useRef(null)
   const streamBufferRef = useRef("")
   const streamFrameRef = useRef(null)
-
+  const hasLoadedChat = useRef(false)
   // Theme load
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme")
@@ -285,14 +286,51 @@ useEffect(() => {
     chatBottomRef.current?.scrollIntoView({behavior:"smooth"})
   },[messages])
 
+
+  useEffect(() => {
+      const saved = localStorage.getItem("studymate_chat")
+      if (saved) {
+        try{
+          setMessages(JSON.parse(saved))
+        }catch{
+          console.warn("failed to parse saved chat")
+        }
+        
+      }
+      hasLoadedChat.current = true
+    }, [])
+
+
+    useEffect(() => {
+      if(!hasLoadedChat.current) return;
+      localStorage.setItem("studymate_chat", JSON.stringify(messages))
+    }, [messages])
+
+    
+
+    const resetChat = () => {
+      setMessages([])
+      localStorage.removeItem("studymate_chat")
+    }
+
+
+
   // Mock streaming method
-  const streamAssistantReply = async ({ prompt, signal, onChunk }) => {
+  const streamAssistantReply = async ({messages, prompt, signal, onChunk }) => {
+        const MAX_MESSAGES = 10
+
+      const contextMessages = [
+          ...messages.slice(-MAX_MESSAGES).map(({ role, content }) => ({
+            role,
+            content,
+          })),
+      ]
     const response = await fetch("http://localhost:8001/chat", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ messages:contextMessages}),
       signal,
     })
 
@@ -364,8 +402,13 @@ useEffect(() => {
             )
           )
         }
+          const updatedMessages = [
+                  ...messages,
+                  userMsg
+                ]
 
         await streamAssistantReply({
+          messages:updatedMessages,
           prompt: text,
           signal: controller.signal,
           onChunk: (delta) => {
@@ -638,7 +681,7 @@ useEffect(() => {
 
         <div className="shrink-0 border-b border-indigo-100/70 dark:border-white/10 bg-white/50 dark:bg-white/[0.03] px-4 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
+            {/* <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
                 Panel Size
               </span>
@@ -677,24 +720,8 @@ useEffect(() => {
                 />
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">%</span>
               </div>
-            </div>
+            </div> */}
 
-            <div className="relative flex items-center justify-center w-14 h-10">
-              <div
-                className={`pointer-events-none absolute top-0 h-20 w-20 rounded-full blur-2xl transition-all duration-500 ${
-                  theme === "light"
-                    ? "bg-amber-300/40 opacity-100"
-                    : "bg-amber-300/0 opacity-0"
-                }`}
-              />
-
-              <Lightbulb
-                duration={750}
-                toggled={theme === "dark"}
-                toggle={toggleTheme}
-                className="text-3xl text-indigo-600 dark:text-indigo-200 p-1.5 rounded-full hover:bg-indigo-100/70 dark:hover:bg-white/10 transition-colors"
-              />
-            </div>
           </div>
         </div>
 
@@ -914,12 +941,40 @@ useEffect(() => {
           <ResizablePanel defaultSize={panelDefaults[1]} minSize={40} className="flex flex-col">
 
             {/* HEADER */}
-            <div className="border-b border-indigo-100/70 dark:border-white/10 px-6 py-4">
+            <div className="border-b border-indigo-100/70 dark:border-white/10 px-6 py-4 flex items-center justify-between">
 
-              <h1 className="font-semibold text-indigo-700 dark:text-indigo-300">
-                🤖 Ai Chat
-              </h1>
-            </div>
+                {/* LEFT */}
+                <h1 className="font-semibold text-indigo-700 dark:text-indigo-300">
+                  🤖 Ai Chat
+                </h1>
+
+                {/* RIGHT */}
+                <div className="flex items-center gap-3">
+                  
+                  {/* Rotate Icon */}
+                  <RotateCw onClick={resetChat} className="cursor-pointer text-indigo-600 dark:text-indigo-200 hover:rotate-180 transition-transform duration-300" />
+
+                  {/* Theme Switch */}
+                  <div className="relative flex items-center justify-center w-14 h-10">
+                    <div
+                      className={`pointer-events-none absolute top-0 h-20 w-20 rounded-full blur-2xl transition-all duration-500 ${
+                        theme === "light"
+                          ? "bg-amber-300/40 opacity-100"
+                          : "bg-amber-300/0 opacity-0"
+                      }`}
+                    />
+
+                    <Lightbulb
+                      duration={750}
+                      toggled={theme === "dark"}
+                      toggle={toggleTheme}
+                      className="text-3xl text-indigo-600 dark:text-indigo-200 p-1.5 rounded-full hover:bg-indigo-100/70 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                    />
+                  </div>
+
+                </div>
+              </div>
+            
             
 
             <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-white/30 to-indigo-50/30 dark:from-white/[0.03] dark:to-white/[0.02]">

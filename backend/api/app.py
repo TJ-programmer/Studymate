@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List
 import asyncio
 
 from backend.api.ingest import ingest_document
@@ -22,8 +23,14 @@ app.add_middleware(
 )
 
 
+
+
+class Message(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
-    prompt: str
+    messages: List[Message]
 
 # ingest enpoint
 @app.post("/ingest")
@@ -62,10 +69,11 @@ async def api_retrieve(
 @app.post("/chat")
 async def chat(payload: ChatRequest):
 
+    messages = [m.dict() for m in payload.messages]
+
     async def generator():
-        async for token in llm_stream(payload.prompt):
+        async for token in llm_stream(messages):
             yield token.encode("utf-8")
-            # Give the event loop a chance to flush each chunk promptly.
             await asyncio.sleep(0)
 
     return StreamingResponse(

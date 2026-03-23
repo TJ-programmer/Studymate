@@ -20,25 +20,38 @@ Primary behavior:
 """
 
 
-user_prompt = "Hi, how are you?"
-def llm_response(user_prompt: str,CONTEXT: str = "") -> str:
+def build_prompt(messages, context=""):
+    formatted_messages = ""
+
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+
+        if role == "system":
+            formatted_messages += f"<|system|>\n{content}\n"
+        elif role == "user":
+            formatted_messages += f"<|user|>\n{content}\n"
+        elif role == "assistant":
+            formatted_messages += f"<|assistant|>\n{content}\n"
 
     prompt = f"""
-    <|system|>
-    {SYSTEM_PROMPT}
+<|system|>
+{SYSTEM_PROMPT}
 
-    Context for answering the question:
-    ---------------------
-    {CONTEXT}
-    ---------------------
+Context for answering the question:
+---------------------
+{context}
+---------------------
 
-    If the context does not contain the answer, say that the context is insufficient.
+If the context does not contain the answer, say that the context is insufficient.
 
-    <|user|>
-    {user_prompt}
+{formatted_messages}
+<|assistant|>
+"""
+    return prompt
+def llm_response(messages,CONTEXT: str = "") :
 
-    <|assistant|>
-    """
+    prompt = build_prompt(messages, CONTEXT)
 
     stream = model(
         prompt,

@@ -9,7 +9,7 @@ from qdrant_client.models import (
     Prefetch
 )
 
-VECTOR_COLLECTION = "rag_justtalks"
+VECTOR_COLLECTION = "rag_studymate"
 VECTOR_SIZE = 384
 QDRANT_URL = "https://eb0db813-6b2c-4982-97a3-1e2c45324ffb.europe-west3-0.gcp.cloud.qdrant.io"
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.UFaUEDX3yAc7Yam_4YMUymQovnd6G3LevqLk5KLK4xU"
