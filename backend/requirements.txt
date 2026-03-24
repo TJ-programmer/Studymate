@@ -3,3 +3,7 @@ pandas
 qdrant-client
 langchain-text-splitters
 sentence-transformers
+Pillow
+PyPDF2
+pytesseract
+pdf2image

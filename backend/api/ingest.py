@@ -2,12 +2,11 @@ from backend.service import RAGService
 
 rag = RAGService()
 
-def ingest_document(document_id, chat_id, file_path):
+async def ingest_document(file):
     try:
-        result = rag.ingest(document_id, chat_id, file_path)
-        print(f"Ingested {result['chunks']} chunks for document {document_id}")
+        result = await rag.ingest(file)
+        print(f"Ingested {result['chunks']} chunks ")
         return result
     except Exception as e:
-        print(f"Error ingesting document {document_id}: {e}")
         return {"status": "FAILED", "error": str(e)}
     

@@ -1,90 +1,107 @@
 from pathlib import Path
+from fastapi import UploadFile
 import pandas as pd
+from io import BytesIO
 
 
-# public entry function
+# =========================
+# MAIN ENTRY
+# =========================
 
-def parse_file(file_path : str) -> str:
-    file_path = file_path.strip().strip('"')
-    ext = Path(file_path).suffix.lower()
+async def parse_file(file: UploadFile):
+    ext = Path(file.filename).suffix.lower()
+    content = await file.read()
 
     if ext == ".txt":
-        return parse_txt(file_path)
+        return [{"page": 1, "text": parse_txt_bytes(content)}]
     
     if ext == ".pdf":
-        return parse_pdf(file_path)
+        return parse_pdf_bytes(content)
     
-    if ext in  [".png",".jpg",".jpeg"] :
-        return parse_image(file_path)
+    if ext in [".png", ".jpg", ".jpeg"]:
+        return [{"page": 1, "text": parse_image_bytes(content)}]
     
-    if ext == ".csv" :
-        return parse_csv(file_path)
+    if ext == ".csv":
+        return [{"page": 1, "text": parse_csv_bytes(content)}]
     
-    if ext in [".xls",".xlsx"] :
-        return parse_excel(file_path)
+    if ext in [".xls", ".xlsx"]:
+        return [{"page": 1, "text": parse_excel_bytes(content)}]
     
-    raise ValueError(f"Unsupported file format : {ext}")
-
-# text parser
-
-def parse_txt(file_path : str) -> str:
-    return Path(file_path).read_text(encoding="utf-8",errors="ignore")
+    raise ValueError(f"Unsupported file format: {ext}")
 
 
-# pdf parser(txt + ocr)
+# =========================
+# TXT
+# =========================
 
-def parse_pdf(file_path :str) -> str:
+def parse_txt_bytes(content: bytes) -> str:
+    return content.decode("utf-8", errors="ignore")
+
+
+# =========================
+# PDF (PAGE-WISE + OCR)
+# =========================
+
+def parse_pdf_bytes(content: bytes):
     from PyPDF2 import PdfReader
 
-    reader = PdfReader(file_path)
+    reader = PdfReader(BytesIO(content))
+    pages_data = []
 
-    pages_text=[]
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
 
-    for page in reader.pages :
-        text = page.extract_text()
+        # OCR fallback for scanned pages
+        if len(text.strip()) < 20:
+            try:
+                from pdf2image import convert_from_bytes
+                import pytesseract
 
-        if text :
-            pages_text.append(text)
+                images = convert_from_bytes(
+                    content,
+                    first_page=i + 1,
+                    last_page=i + 1
+                )
 
-    extracted_text = "\n".join(pages_text).strip()
+                text = pytesseract.image_to_string(images[0])
+            except Exception as e:
+                text = f"[OCR FAILED: {str(e)}]"
 
-    if len(extracted_text) < 50 :
-        from pdf2image import convert_from_path
-        import pytesseract 
+        pages_data.append({
+            "page": i + 1,
+            "text": text.strip()
+        })
 
-        images = convert_from_path(file_path)
-        text = []
-
-        for img in images :
-            text.append(pytesseract.image_to_string(img))
-
-        return "\n".join(text)
-    
-    return extracted_text
+    return pages_data
 
 
-# img parser
+# =========================
+# IMAGE (OCR)
+# =========================
 
-def parse_image(file_path : str) -> str:
+def parse_image_bytes(content: bytes) -> str:
     from PIL import Image
     import pytesseract
 
-    img = Image.open(file_path)
+    img = Image.open(BytesIO(content))
     return pytesseract.image_to_string(img)
 
-# csv parser
 
-def parse_csv(file_path : str ) -> str:
-    df = pd.read_csv(file_path)
+# =========================
+# CSV
+# =========================
+
+def parse_csv_bytes(content: bytes) -> str:
+    df = pd.read_csv(BytesIO(content))
     return df.to_csv(index=False)
 
 
-# Excel (Xls/xlsx) parser
+# =========================
+# EXCEL
+# =========================
 
-def parse_excel(file_path: str ) -> str:
-    df = pd.read_excel(file_path)
-
+def parse_excel_bytes(content: bytes) -> str:
+    df = pd.read_excel(BytesIO(content))
     return df.to_csv(index=False)
-
 
 

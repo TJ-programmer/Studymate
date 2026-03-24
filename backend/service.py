@@ -6,39 +6,60 @@ from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 import uuid
 import numpy as np
 from typing import List
-
+from fastapi import UploadFile
 class RAGService:
 
-    def ingest(self, document_id: str, chat_id: str, file_path: str):
-        print(f"[INGEST] Starting ingestion for file: {file_path}")
-        text = parse_file(file_path)
-        print(f"[INGEST] Parsed text length: {len(text)} characters")
+    async def ingest(self,file : UploadFile):
+        print(f"[INGEST] Starting ingestion for file: {file.filename}")
+        pages = await parse_file(file)
+        print(f"[INGEST] Parsed {len(pages)} pages")
 
-        chunks = chunk_text(text, file_path=file_path)
-        print(f"[INGEST] Created {len(chunks)} chunks")
 
-        embeddings = embed_texts(chunks)
+        all_chunks = []
+
+        for page_data in pages:
+            page_num = page_data["page"]
+            text = page_data["text"]
+
+            chunks = chunk_text(text, file)
+
+            # attach metadata (VERY IMPORTANT for RAG)
+            for chunk in chunks:
+                all_chunks.append({
+                    "text": chunk,
+                    "page": page_num,
+                    "source": file.filename
+                })
+
+        print(f"[INGEST] Created {len(all_chunks)} chunks")
+
+        texts = [chunk["text"] for chunk in all_chunks]
+
+        embeddings = embed_texts(texts)
         print(f"[INGEST] Generated embeddings for {len(embeddings)} chunks")
 
         points = []
-        for idx, (chunk, vector) in enumerate(zip(chunks, embeddings)):
+
+        for idx, (chunk, vector) in enumerate(zip(all_chunks, embeddings)):
             point_id = str(uuid.uuid4())
+
             points.append(
                 PointStruct(
                     id=point_id,
                     vector=vector,
                     payload={
-                        "document_id": document_id,
-                        "chat_id": chat_id,
-                        "file_path": file_path,
                         "chunk_index": idx,
-                        "text": chunk
+                        "text": chunk["text"],
+                        "page": chunk["page"],
+                        "source": chunk["source"],
+
                     }
                 )
             )
-            if idx % 10 == 0 or idx == len(chunks) - 1:
-                print(f"[INGEST] Prepared point {idx+1}/{len(chunks)} with id {point_id}")
 
+            if idx % 10 == 0 or idx == len(all_chunks) - 1:
+                print(f"[INGEST] Prepared point {idx+1}/{len(all_chunks)}")
+                
         insert_vectors(points)
         print(f"[INGEST] Inserted {len(points)} vectors into the vector database")
         return {"status": "READY", "chunks": len(points)}

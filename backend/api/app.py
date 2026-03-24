@@ -1,4 +1,4 @@
-from fastapi import FastAPI,Form
+from fastapi import FastAPI,Form,UploadFile,File
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,18 +35,13 @@ class ChatRequest(BaseModel):
 # ingest enpoint
 @app.post("/ingest")
 async def api_ingest(
-    file_path: str = Form(...),
-    chat_id: str = Form(...),
-    document_id: str = Form(None)
+    file: UploadFile = File(...),
 ):
   
     try:
        
-        if document_id is None:
-            import uuid
-            document_id = str(uuid.uuid4())
 
-        result = ingest_document(document_id, chat_id, file_path)
+        result = await ingest_document(file)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"status": "FAILED", "error": str(e)})

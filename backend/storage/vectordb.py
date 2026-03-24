@@ -11,40 +11,27 @@ from qdrant_client.models import (
 
 VECTOR_COLLECTION = "rag_studymate"
 VECTOR_SIZE = 384
-QDRANT_URL = "https://eb0db813-6b2c-4982-97a3-1e2c45324ffb.europe-west3-0.gcp.cloud.qdrant.io"
-API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.UFaUEDX3yAc7Yam_4YMUymQovnd6G3LevqLk5KLK4xU"
 
-client = QdrantClient(
-    url=QDRANT_URL,
-    api_key=API_KEY
-)
+client = QdrantClient(path="./qdrant_storage")
 
-def init_collection(vector_size: int = VECTOR_SIZE, recreate: bool = False):
-    existing_collections = [c.name for c in client.get_collections().collections]
-    
-    if VECTOR_COLLECTION in existing_collections:
-        if recreate:
-            print(f"Recreating collection '{VECTOR_COLLECTION}'...")
-            client.recreate_collection(
-                collection_name=VECTOR_COLLECTION,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=Distance.COSINE
-                ),
-            )
-            _create_indexes()
-        else:
-            print(f"Collection '{VECTOR_COLLECTION}' already exists. Skipping creation.")
-    else:
-        print(f"Creating collection '{VECTOR_COLLECTION}'...")
-        client.create_collection(
-            collection_name=VECTOR_COLLECTION,
-            vectors_config=VectorParams(
-                size=vector_size,
-                distance=Distance.COSINE
-            ),
-        )
-        _create_indexes()
+def init_collection(vector_size: int = VECTOR_SIZE):
+    collections = [c.name for c in client.get_collections().collections]
+
+    if VECTOR_COLLECTION in collections:
+        print(f"Collection '{VECTOR_COLLECTION}' already exists.")
+        return
+
+    print(f"Creating collection '{VECTOR_COLLECTION}'...")
+
+    client.create_collection(
+        collection_name=VECTOR_COLLECTION,
+        vectors_config=VectorParams(
+            size=vector_size,
+            distance=Distance.COSINE
+        ),
+    )
+
+    _create_indexes()
 
 def _create_indexes():
     """Create payload indexes for filtering"""
@@ -63,15 +50,19 @@ def _create_indexes():
     
     print("Indexes created successfully.")
 
-def insert_vectors(points: list):
-   
-    init_collection(recreate=False)
-    
-    client.upsert(
-        collection_name=VECTOR_COLLECTION,
-        points=points
-    )
+def insert_vectors(points: list, batch_size: int = 100):
+    init_collection()
+
+    for i in range(0, len(points), batch_size):
+        batch = points[i:i + batch_size]
+
+        client.upsert(
+            collection_name=VECTOR_COLLECTION,
+            points=batch
+        )
+
     print(f"Inserted {len(points)} points successfully")
+   
 
 def search_vectors(query_vector, chat_id: str, top_k: int = 5):
     """Search vectors using the query API with chat_id filter"""

@@ -193,10 +193,33 @@ function Home() {
   const nextPage = () => setPageNumber((p) => Math.min(p + 1, numPages))
   const prevPage = () => setPageNumber((p) => Math.max(p - 1, 1))
 
+  const uploadPDF = async (file) => {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch("http://localhost:8001/ingest", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!res.ok) {
+      throw new Error("Upload failed");
+    }
+
+    const data = await res.json();
+    console.log("Ingest result:", data);
+  } catch (err) {
+    console.error("Upload error:", err);
+  }
+};
+
   const handleFileUpload = (e) => {
     const selectedFile = e.target.files[0]
     if (!selectedFile) return
 
+  
+    uploadPDF(selectedFile)
     // Read as base64 and persist to localStorage
     const reader = new FileReader()
     reader.onload = (event) => {
