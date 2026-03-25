@@ -64,24 +64,38 @@ class RAGService:
         print(f"[INGEST] Inserted {len(points)} vectors into the vector database")
         return {"status": "READY", "chunks": len(points)}
 
-    def retrieve(self, chat_id: str, query: str, top_k: int = 5):
-        print(f"[RETRIEVE] Retrieving for chat_id: {chat_id} with query: '{query}'")
+    def retrieve(
+        self,
+        source: str,
+        query: str,
+        top_k: int = 5,
+        page: int = None,
+        start_page: int = None,
+        end_page: int = None
+    ):
+        print(f"[RETRIEVE] Source: {source}, Query: '{query}'")
+
         q_vector = embed_query(query)
-        print(f"[RETRIEVE] Generated query embedding")
-        
-        # Get more results for reranking
-        results = search_vectors(q_vector, chat_id=chat_id, top_k=top_k*3)
-        print(f"[RETRIEVE] Retrieved {len(results)} vectors from database")
-        
-        # Convert ScoredPoint objects to dict format for reranking
+
+        results = search_vectors(
+            query_vector=q_vector,
+            source=source,
+            page=page,
+            start_page=start_page,
+            end_page=end_page,
+            top_k=top_k * 3
+        )
+
         retrieved_chunks = [
             {
                 "text": point.payload.get("text", ""),
                 "score": point.score,
-                **point.payload  # Include all other payload fields
+                **point.payload
             }
             for point in results
         ]
+
+        
         
         results = rerank(query, retrieved_chunks, top_k=top_k)
         print(f"[RETRIEVE] Reranked top {top_k} results")

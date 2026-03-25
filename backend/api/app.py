@@ -50,13 +50,22 @@ async def api_ingest(
 # Retrieve endpoint
 @app.get("/retrieve")
 async def api_retrieve(
-    chat_id: str,
+    source: str,
     query: str,
-    top_k: int = 5
+    top_k: int = 5,
+    page: int = None,
+    start_page: int = None,
+    end_page: int = None
 ):
-    
     try:
-        result = retrieve_context(chat_id, query, top_k)
+        result = retrieve_context(
+            source=source,
+            query=query,
+            top_k=top_k,
+            page=page,
+            start_page=start_page,
+            end_page=end_page
+        )
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"status": "FAILED", "error": str(e)})

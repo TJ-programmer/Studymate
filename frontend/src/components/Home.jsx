@@ -4,7 +4,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-import { RotateCw } from 'lucide-react';
+import { RotateCw , Bolt} from 'lucide-react';
 import { Document, Page, pdfjs } from "react-pdf"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min?url"
 import { Lightbulb } from "@theme-toggles/react"
@@ -29,6 +29,7 @@ function Home() {
   const [matchPositions, setMatchPositions] = useState([])
   const [currentMatch, setCurrentMatch] = useState(0)
   const [pdfTextIndex, setPdfTextIndex] = useState({})
+  const [ragavailable,setRagAvailable] = useState(false)
   
   const pageMatchCounter = useRef(0)
   const pdfContainerRef = useRef(null)
@@ -49,6 +50,19 @@ function Home() {
   const streamBufferRef = useRef("")
   const streamFrameRef = useRef(null)
   const hasLoadedChat = useRef(false)
+
+
+  //rag control state
+  const [open, setOpen] = useState(false)
+  const iconRef = useRef(null)
+  const [position, setPosition] = useState({ top: 0, left: 0 })
+
+  // ADD THESE:
+  const [mode, setMode] = useState("single")
+  const [singlePage, setSinglePage] = useState(1)
+  const [range, setRange] = useState({ start: 1, end: 5 })
+
+
   // Theme load
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme")
@@ -203,6 +217,9 @@ function Home() {
       body: formData,
     });
 
+    if(res.ok){
+      setRagAvailable(true)
+    }
     if (!res.ok) {
       throw new Error("Upload failed");
     }
@@ -1058,9 +1075,199 @@ useEffect(() => {
                 ))}
                 <div ref={chatBottomRef} />
               </div>
+            
 
               {/* Composer */}
               <div className="shrink-0 border-t border-indigo-100/70 dark:border-white/10 p-3 bg-white/50 dark:bg-white/[0.03] backdrop-blur-sm">
+                {ragavailable && (
+                  <div className="relative group w-fit mb-3">
+
+                    {/* Trigger Icon */}
+                    <div
+                      ref={iconRef}
+                      onClick={toggleOpen}
+                      className={`cursor-pointer transition-all duration-300 group-hover:scale-110 p-1.5 rounded-lg
+                        ${open
+                          ? "text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-500/20"
+                          : "text-indigo-500 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-white/10"
+                        }`}
+                    >
+                      <Bolt size={16} />
+                    </div>
+
+                    {/* Hover Tooltip — only when closed */}
+                    {!open && (
+                      <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2
+                        opacity-0 group-hover:opacity-100 transition-all duration-200
+                        bg-slate-800 dark:bg-slate-700 text-white text-[11px]
+                        px-2.5 py-1.5 rounded-lg whitespace-nowrap pointer-events-none
+                        shadow-lg">
+                        Adjust RAG Context
+                        {/* Arrow */}
+                        <span className="absolute right-full top-1/2 -translate-y-1/2
+                          border-4 border-transparent border-r-slate-800 dark:border-r-slate-700" />
+                      </div>
+                    )}
+
+                    {/* Drop-up Panel */}
+                    {open && (
+                      <>
+                        {/* Backdrop */}
+                        <div
+                          className="fixed inset-0 z-[9998]"
+                          onClick={() => setOpen(false)}
+                        />
+
+                        <div
+                          style={{
+                            position: "fixed",
+                            top: position.top,
+                            left: position.left,
+                            transform: "translate(-50%, calc(-100% - 12px))",
+                            zIndex: 9999,
+                          }}
+                          className="w-60 rounded-2xl shadow-2xl border
+                            bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl
+                            border-indigo-100 dark:border-white/10
+                            overflow-hidden"
+                        >
+                          {/* Panel Header */}
+                          <div className="px-4 pt-3.5 pb-2.5 border-b border-indigo-50 dark:border-white/10
+                            bg-indigo-50/60 dark:bg-white/5 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Bolt size={13} className="text-indigo-500 dark:text-indigo-400" />
+                              <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                RAG Context
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => setOpen(false)}
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200
+                                transition-colors text-xs leading-none px-1"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="p-4 space-y-4">
+
+                            {/* Mode Toggle */}
+                            <div>
+                              <p className="text-[10px] uppercase tracking-widest text-slate-400
+                                dark:text-slate-500 mb-2 font-medium">
+                                Mode
+                              </p>
+                              <div className="flex gap-1.5 p-1 rounded-xl bg-indigo-50 dark:bg-white/5
+                                border border-indigo-100 dark:border-white/10">
+                                {["single", "range"].map((m) => (
+                                  <button
+                                    key={m}
+                                    onClick={() => setMode(m)}
+                                    className={`flex-1 text-xs px-3 py-1.5 rounded-lg font-medium
+                                      transition-all duration-200 capitalize
+                                      ${mode === m
+                                        ? "bg-indigo-500 text-white shadow-sm shadow-indigo-200 dark:shadow-indigo-900"
+                                        : "text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300"
+                                      }`}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Page Input(s) */}
+                            <div>
+                              <p className="text-[10px] uppercase tracking-widest text-slate-400
+                                dark:text-slate-500 mb-2 font-medium">
+                                {mode === "single" ? "Page" : "Page Range"}
+                              </p>
+
+                              {mode === "single" ? (
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={numPages || 999}
+                                    value={singlePage}
+                                    onChange={(e) => setSinglePage(Number(e.target.value))}
+                                    className="w-full text-sm px-3 py-2 rounded-xl
+                                      border border-indigo-100 dark:border-white/15
+                                      bg-white dark:bg-white/10
+                                      text-slate-800 dark:text-slate-100
+                                      outline-none focus:ring-2 focus:ring-indigo-400/40
+                                      transition-all"
+                                  />
+                                  {numPages && (
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2
+                                      text-[10px] text-slate-400 dark:text-slate-500 pointer-events-none">
+                                      / {numPages}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={numPages || 999}
+                                    value={range.start}
+                                    onChange={(e) => setRange({ ...range, start: Number(e.target.value) })}
+                                    placeholder="Start"
+                                    className="w-1/2 text-sm px-3 py-2 rounded-xl
+                                      border border-indigo-100 dark:border-white/15
+                                      bg-white dark:bg-white/10
+                                      text-slate-800 dark:text-slate-100
+                                      outline-none focus:ring-2 focus:ring-indigo-400/40
+                                      placeholder:text-slate-300 dark:placeholder:text-slate-600
+                                      transition-all"
+                                  />
+                                  <span className="text-slate-300 dark:text-slate-600 text-sm font-light">→</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={numPages || 999}
+                                    value={range.end}
+                                    onChange={(e) => setRange({ ...range, end: Number(e.target.value) })}
+                                    placeholder="End"
+                                    className="w-1/2 text-sm px-3 py-2 rounded-xl
+                                      border border-indigo-100 dark:border-white/15
+                                      bg-white dark:bg-white/10
+                                      text-slate-800 dark:text-slate-100
+                                      outline-none focus:ring-2 focus:ring-indigo-400/40
+                                      placeholder:text-slate-300 dark:placeholder:text-slate-600
+                                      transition-all"
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Apply Button */}
+                            <button
+                              onClick={() => {
+                                // wire up your apply logic here
+                                setOpen(false)
+                              }}
+                              className="w-full py-2 rounded-xl text-xs font-semibold
+                                bg-indigo-500 hover:bg-indigo-600 active:bg-indigo-700
+                                text-white transition-colors duration-200
+                                shadow-sm shadow-indigo-200 dark:shadow-indigo-900/50"
+                            >
+                              Apply Context
+                            </button>
+
+                          </div>
+
+                          {/* Arrow pointing down toward trigger */}
+                          <div className="absolute left-1/2 -translate-x-1/2 -bottom-[7px]
+                            w-3.5 h-3.5 rotate-45
+                            bg-white dark:bg-zinc-900
+                            border-r border-b border-indigo-100 dark:border-white/10" />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-end gap-2 rounded-2xl border border-indigo-100/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/40 p-2">
                   <textarea
                     value={chatInput}
@@ -1075,6 +1282,7 @@ useEffect(() => {
                       }
                     }}
                   />
+                  
                   <button
                     onClick={sendMessage}
                     disabled={isSending || !chatInput.trim()}

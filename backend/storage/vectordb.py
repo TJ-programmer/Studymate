@@ -6,7 +6,8 @@ from qdrant_client.models import (
     FieldCondition, 
     MatchValue,
     PayloadSchemaType,
-    Prefetch
+    Prefetch,
+    Range
 )
 
 VECTOR_COLLECTION = "rag_studymate"
@@ -64,40 +65,61 @@ def insert_vectors(points: list, batch_size: int = 100):
     print(f"Inserted {len(points)} points successfully")
    
 
-def search_vectors(query_vector, chat_id: str, top_k: int = 5):
-    """Search vectors using the query API with chat_id filter"""
-    
-    chat_id = chat_id.strip().strip('"')
+def search_vectors(
+    query_vector,
+    source,
+    page=None,
+    start_page=None,
+    end_page=None,
+    top_k: int = 5
+):
+    source = source.strip().strip('"')
 
-    # Validate query vector
     if not query_vector or len(query_vector) != VECTOR_SIZE:
         raise ValueError(f"Query vector must have {VECTOR_SIZE} dimensions")
-    
-    # Create filter condition
-    filter_condition = Filter(
-        must=[
+
+    must_conditions = []
+
+    # ✅ source filter (important for multi-doc)
+    if source:
+        must_conditions.append(
             FieldCondition(
-                key="chat_id",
-                match=MatchValue(value=chat_id)
+                key="source",
+                match=MatchValue(value=source)
             )
-        ]
-    )
+        )
+
+    # ✅ page filtering
+    if page is not None:
+        must_conditions.append(
+            FieldCondition(
+                key="page",
+                match=MatchValue(value=page)
+            )
+        )
+
+    elif start_page is not None and end_page is not None:
+        must_conditions.append(
+            FieldCondition(
+                key="page",
+                range=Range(gte=start_page, lte=end_page)
+            )
+        )
+
+    filter_condition = Filter(must=must_conditions) if must_conditions else None
 
     response = client.query_points(
         collection_name=VECTOR_COLLECTION,
-        query=query_vector,              # ✅ REQUIRED
-        query_filter=filter_condition,   # ✅ CORRECT PLACE
+        query=query_vector,
+        query_filter=filter_condition,
         limit=top_k,
         with_payload=True,
         with_vectors=False
     )
 
+    print(f"Found {len(response.points)} results")
 
-    
-    print(f"Found {len(response.points)} results for chat_id: '{chat_id}'")
-    
     return response.points
-
 def delete_by_document(document_id: str):
     """Delete all points associated with a document"""
     client.delete(
