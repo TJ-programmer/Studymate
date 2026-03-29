@@ -3,9 +3,10 @@ from backend.service import LLMService
 
 llm = LLMService()
 
-async def llm_stream(messages):
+async def llm_stream(messages,context):
     
     async for token in llm.stream_llm_response(
-        messages=messages
+        messages=messages,
+        context= context
     ):
         yield token

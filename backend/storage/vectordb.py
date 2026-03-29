@@ -120,50 +120,19 @@ def search_vectors(
     print(f"Found {len(response.points)} results")
 
     return response.points
-def delete_by_document(document_id: str):
-    """Delete all points associated with a document"""
+
+def delete_by_source(source: str):
+    """Delete all points associated with a source"""
     client.delete(
         collection_name=VECTOR_COLLECTION,
         points_selector=Filter(
             must=[
                 FieldCondition(
-                    key="document_id", 
-                    match=MatchValue(value=document_id)
+                    key="source",
+                    match=MatchValue(value=source)
                 )
             ]
         )
     )
-    print(f"Deleted points for document_id: {document_id}")
-
-def debug_chat_ids():
-    """Check what chat_ids are actually stored in the collection"""
-    
-    # Get a sample of points
-    response = client.scroll(
-        collection_name=VECTOR_COLLECTION,
-        limit=10,
-        with_payload=True,
-        with_vectors=False
-    )
-    
-    print(f"\n=== Stored Points Sample ===")
-    print(f"Total points retrieved: {len(response[0])}")
-    
-    chat_ids = set()
-    for point in response[0]:
-        print(f"\nPoint ID: {point.id}")
-        print(f"Payload: {point.payload}")
-        
-        if 'chat_id' in point.payload:
-            chat_id = point.payload['chat_id']
-            chat_ids.add(chat_id)
-            print(f"  chat_id: '{chat_id}' (type: {type(chat_id)})")
-        else:
-            print(f"  ⚠️ No 'chat_id' field found!")
-    
-    print(f"\n=== Unique chat_ids found ===")
-    for cid in chat_ids:
-        print(f"  - '{cid}' (type: {type(cid)})")
-    
-    return list(chat_ids)
+    print(f"Deleted points for source: {source}")
 

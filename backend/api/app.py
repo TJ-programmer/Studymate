@@ -9,6 +9,7 @@ import asyncio
 from backend.api.ingest import ingest_document
 from backend.api.retrieve import retrieve_context
 from backend.api.llm import llm_stream
+from backend.api.clear import clear_document
 app = FastAPI(title="Studymate api",version="1.0")
 
 app.add_middleware(
@@ -27,10 +28,11 @@ app.add_middleware(
 
 class Message(BaseModel):
     role: str
-    content: str
+    content: str    
 
 class ChatRequest(BaseModel):
     messages: List[Message]
+    context: str
 
 # ingest enpoint
 @app.post("/ingest")
@@ -69,14 +71,24 @@ async def api_retrieve(
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"status": "FAILED", "error": str(e)})
+
+@app.post("/clear")
+async def clear(source : str ):
+    try:
+       
+
+        result = await clear_document(source)
+        return JSONResponse(content=result)
+    except Exception as e:
+        return JSONResponse(content={"status": "FAILED", "error": str(e)})
     
 @app.post("/chat")
 async def chat(payload: ChatRequest):
 
     messages = [m.dict() for m in payload.messages]
-
+    context = payload.context
     async def generator():
-        async for token in llm_stream(messages):
+        async for token in llm_stream(messages,context):
             yield token.encode("utf-8")
             await asyncio.sleep(0)
 
@@ -88,3 +100,4 @@ async def chat(payload: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+

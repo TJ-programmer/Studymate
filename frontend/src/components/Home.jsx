@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   ResizableHandle,
   ResizablePanel,
@@ -154,13 +155,13 @@ function Home() {
       const savedPage = localStorage.getItem("pdf_page")
 
       if (savedPdf && savedName) {
-        // Convert base64 data URL back to a File object
         fetch(savedPdf)
           .then((res) => res.blob())
           .then((blob) => {
             const restored = new File([blob], savedName, { type: "application/pdf" })
             setFile(restored)
             if (savedPage) setPageNumber(parseInt(savedPage, 10))
+            uploadPDF(restored)  // ✅ re-ingest into RAG backend on refresh
           })
       }
     } catch (err) {
@@ -254,14 +255,29 @@ function Home() {
     setPageNumber(1)
   }
 
-  const closePdf = () => {
-    setFile(null)
-    setNumPages(null)
-    setPageNumber(1)
-    localStorage.removeItem("pdf_data")
-    localStorage.removeItem("pdf_name")
-    localStorage.removeItem("pdf_page")
-  }
+  const closePdf = async () => {
+    try {
+      const pdfName = file.name
+
+      if (pdfName) {
+        await fetch(`http://localhost:8001/clear?source=${encodeURIComponent(pdfName)}`, {
+          method: "POST",
+        });
+      }
+
+      // Clear state AFTER API call
+      setFile(null);
+      setNumPages(null);
+      setPageNumber(1);
+
+      localStorage.removeItem("pdf_data");
+      localStorage.removeItem("pdf_name");
+      localStorage.removeItem("pdf_page");
+
+    } catch (error) {
+      console.error("Error clearing document:", error);
+    }
+  };
 
  useEffect(() => {
   if (!searchText || !pdfTextIndex) {
@@ -305,7 +321,7 @@ useEffect(() => {
     setPageNumber(match.page)
   }
 }, [currentMatch, matchPositions])
-  pageMatchCounter.current = 0
+ 
 
   //Intial assistant message
   useEffect(()=>{
@@ -353,51 +369,149 @@ useEffect(() => {
       localStorage.removeItem("studymate_chat")
     }
 
+  const toggleOpen = (e) => {
+      e.stopPropagation()  // prevent the backdrop from catching this click
+      const rect = iconRef.current?.getBoundingClientRect()
+      if (rect) {
+        setPosition({
+          top: rect.top,
+          left: rect.left + rect.width / 2,
+        })
+      }
+      setOpen((prev) => !prev)
+    }
+
+  
+
+  const RetrieveContext = async (query) => {
+        console.log("🔍 RetrieveContext called with query:", query)
+        
+        if (!file) {
+          console.log("❌ No file available, skipping RAG")
+          return ""
+        }
+
+        const source = file.name
+        console.log("📄 Source file:", source)
+
+        const params = new URLSearchParams({ source, query, top_k: 5 })
+
+        if (mode === "single") {
+          params.append("page", singlePage)
+          console.log("📃 Single page mode, page:", singlePage)
+        } else if (mode === "range") {
+          params.append("start_page", range.start)
+          params.append("end_page", range.end)
+          console.log("📃 Range mode, start:", range.start, "end:", range.end)
+        }
+
+        const url = `http://localhost:8001/retrieve?${params.toString()}`
+        console.log("🌐 Fetching URL:", url)
+
+        try {
+          const res = await fetch(url)
+          console.log("📡 Response status:", res.status, res.ok)
+
+          if (!res.ok) {
+            console.log("❌ Response not ok")
+            return ""
+          }
+
+          const data = await res.json()
+          console.log("📦 Raw response data:", data)
+
+          if (data.status === "FAILED" || !data.context) {
+            console.log("❌ No context returned or status FAILED:", data)
+            return ""
+          }
+
+          console.log("✅ Context retrieved, length:", data.context.length)
+          console.log("📝 Context preview:", data.context.slice(0, 200))
+          const chunks = data.context.split("\n\n")
+          const unique = [...new Set(chunks.map(c => c.trim()))].filter(Boolean)
+          console.log("🧹 After dedup — chunks:", unique.length)
+          return unique.join("\n\n")
+
+        } catch (err) {
+          console.error("💥 RetrieveContext fetch error:", err)
+          return ""
+        }
+  }
 
 
   // Mock streaming method
-  const streamAssistantReply = async ({messages, prompt, signal, onChunk }) => {
-        const MAX_MESSAGES = 10
+  const streamAssistantReply = async ({ messages, prompt, signal, onChunk }) => {
+      const MAX_MESSAGES = 10
 
       const contextMessages = [
-          ...messages.slice(-MAX_MESSAGES).map(({ role, content }) => ({
-            role,
-            content,
-          })),
+        ...messages.slice(-MAX_MESSAGES).map(({ role, content }) => ({
+          role,
+          content,
+        })),
       ]
-    const response = await fetch("http://localhost:8001/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ messages:contextMessages}),
-      signal,
-    })
 
-    if (!response.ok) {
-      const errText = await response.text()
-      throw new Error(errText || `Request failed with status ${response.status}`)
-    }
+      let context = ""
+      if (ragavailable) {
+        console.log("🤖 RAG is available, retrieving context...")
+        context = await RetrieveContext(prompt)
+        const MAX_CONTEXT = 500  // tweak this number as needed
+        context = context.slice(0, MAX_CONTEXT)
+        console.log("✂️ Trimmed context length:", context.length)
+        console.log("✂️ Trimmed context:", context)
+        console.log("📬 Final context sent to LLM (length):", context.length)
+        console.log("📬 Context content:", context || "EMPTY — nothing retrieved")
+      } else {
+        console.log("⚠️ ragavailable is false — RAG skipped entirely")
+      }
 
-    if (!response.body) {
-      throw new Error("No stream returned")
-    }
+      console.log("📤 Sending to LLM — context length:", context.length)
+      console.log("📤 Context being sent:", context.slice(0, 300) || "EMPTY")
+      console.log("📤 Messages being sent:", contextMessages)
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder("utf-8")
+      const response = await fetch("http://localhost:8001/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          messages: contextMessages,
+          context,
+        }),
+        signal,
+      })
 
-    while (true) {
-      const { value, done } = await reader.read()
+      console.log("📡 LLM response status:", response.status, response.ok)
 
-      if (done) break
+      if (!response.ok) {
+        const errText = await response.text()
+        console.error("❌ LLM request failed:", errText)
+        throw new Error(errText || `Request failed with status ${response.status}`)
+      }
 
-      const chunk = decoder.decode(value, { stream: true })
-      onChunk(chunk)
-    }
+      if (!response.body) throw new Error("No stream returned")
 
-    const finalChunk = decoder.decode()
-    if (finalChunk) onChunk(finalChunk)
+      console.log("✅ Stream started, receiving tokens...")
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder("utf-8")
+      let totalChunks = 0
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) {
+          console.log("🏁 Stream complete — total chunks received:", totalChunks)
+          break
+        }
+        const chunk = decoder.decode(value, { stream: true })
+        totalChunks++
+        if (totalChunks <= 3) {
+          console.log(`🔤 Chunk #${totalChunks}:`, chunk) // only log first 3 to avoid spam
+        }
+        onChunk(chunk)
+      }
+
+      const finalChunk = decoder.decode()
+      if (finalChunk) onChunk(finalChunk)
   }
+
 
   const sendMessage = async () => {
       const text = chatInput.trim()
@@ -710,6 +824,8 @@ useEffect(() => {
       </div>
     )
   }
+
+  pageMatchCounter.current = 0
 
   return (
     <div className="h-screen w-screen p-4 bg-gradient-to-br from-indigo-100 via-sky-100 to-purple-100 
@@ -1085,7 +1201,7 @@ useEffect(() => {
                     {/* Trigger Icon */}
                     <div
                       ref={iconRef}
-                      onClick={toggleOpen}
+                      onClick={(e) => toggleOpen(e)}
                       className={`cursor-pointer transition-all duration-300 group-hover:scale-110 p-1.5 rounded-lg
                         ${open
                           ? "text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-500/20"
@@ -1110,27 +1226,26 @@ useEffect(() => {
                     )}
 
                     {/* Drop-up Panel */}
-                    {open && (
-                      <>
-                        {/* Backdrop */}
-                        <div
-                          className="fixed inset-0 z-[9998]"
-                          onClick={() => setOpen(false)}
-                        />
-
-                        <div
-                          style={{
-                            position: "fixed",
-                            top: position.top,
-                            left: position.left,
-                            transform: "translate(-50%, calc(-100% - 12px))",
-                            zIndex: 9999,
-                          }}
-                          className="w-60 rounded-2xl shadow-2xl border
-                            bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl
-                            border-indigo-100 dark:border-white/10
-                            overflow-hidden"
-                        >
+                    {open && createPortal(
+                        <>
+                          {/* Backdrop */}
+                          <div
+                            className="fixed inset-0 z-[9998]"
+                            onClick={() => setOpen(false)}
+                          />
+                          <div
+                            style={{
+                              position: "fixed",
+                              top: position.top,
+                              left: position.left,
+                              transform: "translate(-50%, calc(-100% - 12px))",
+                              zIndex: 9999,
+                            }}
+                            className="w-60 rounded-2xl shadow-2xl border
+                              bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl
+                              border-indigo-100 dark:border-white/10
+                              overflow-hidden"
+                          >
                           {/* Panel Header */}
                           <div className="px-4 pt-3.5 pb-2.5 border-b border-indigo-50 dark:border-white/10
                             bg-indigo-50/60 dark:bg-white/5 flex items-center justify-between">
@@ -1264,7 +1379,8 @@ useEffect(() => {
                             bg-white dark:bg-zinc-900
                             border-r border-b border-indigo-100 dark:border-white/10" />
                         </div>
-                      </>
+                      </>,
+                      document.body
                     )}
                   </div>
                 )}

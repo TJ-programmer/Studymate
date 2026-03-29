@@ -1,7 +1,7 @@
 from backend.core.parse import parse_file
 from backend.core.chunk import chunk_text
 from backend.core.embed import embed_texts, embed_query
-from backend.storage.vectordb import insert_vectors, search_vectors, init_collection
+from backend.storage.vectordb import insert_vectors, search_vectors, init_collection,delete_by_source
 from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 import uuid
 import numpy as np
@@ -105,6 +105,11 @@ class RAGService:
         
         return context
 
+    async def clear(self,source:str):
+        delete_by_source(source)
+        print(f"[DELETE] deleted {source} vectors into the vector database")
+        return {"status": "READY"}
+
 
 # Rerank function
 def rerank(query: str, retrieved_chunks: List[dict], top_k: int = 5) -> List[dict]:
@@ -160,7 +165,7 @@ from backend.core.rate_limiter import check_rate_limit
 class LLMService :
 
 
-    async def stream_llm_response(self, messages):
+    async def stream_llm_response(self, messages,context):
 
         import asyncio
 
@@ -185,7 +190,7 @@ class LLMService :
         full_response = ""
 
         try:
-            for token in llm_response(messages):
+            for token in llm_response(messages,CONTEXT=context):
                 if token:
                     full_response += token
                     yield token
