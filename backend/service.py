@@ -1,6 +1,7 @@
 from backend.core.parse import parse_file
 from backend.core.chunk import chunk_text
 from backend.core.embed import embed_texts, embed_query
+from backend.core.youtube_video_generator import search_youtube
 from backend.storage.vectordb import insert_vectors, search_vectors, init_collection,delete_by_source
 from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 import uuid
@@ -162,10 +163,17 @@ from backend.core.cache import get_cached, set_cache
 from backend.core.rate_limiter import check_rate_limit
 
 
-class LLMService :
+import asyncio
+from typing import Dict, Any
+
+# assume these already exist
+# from your_module import search_youtube
+# from cache_module import get_cached, set_cache
 
 
-    async def stream_llm_response(self, messages,context):
+class LLMService:
+
+    async def stream_llm_response(self, messages, context):
 
         import asyncio
 
@@ -190,7 +198,7 @@ class LLMService :
         full_response = ""
 
         try:
-            for token in llm_response(messages,CONTEXT=context):
+            for token in llm_response(messages, CONTEXT=context):
                 if token:
                     full_response += token
                     yield token
@@ -203,3 +211,85 @@ class LLMService :
         # 3️⃣ Save cache
         if full_response.strip() and len(full_response) < 5000:
             set_cache(key_input, full_response)
+
+    # =========================================
+    # 🎥 YOUTUBE RECOMMENDER (ASYNC + CACHE)
+    # =========================================
+    async def recommend_youtube(self, query: str) -> Dict[str, Any]:
+        """
+        Scalable YouTube recommendation layer
+
+        Features:
+        - Cache support
+        - Async safe
+        - Extensible pipeline
+        """
+
+        cache_key = f"yt::{query}"
+
+        # 1️⃣ Cache check
+        cached = get_cached(cache_key)
+        if cached:
+            return {
+                "status": "success",
+                "source": "cache",
+                **cached
+            }
+
+        # 2️⃣ Run blocking search in thread
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            search_youtube,
+            query
+        )
+
+        # 3️⃣ Post-process (future-safe layer)
+        result = self._post_process_videos(result)
+
+        # 4️⃣ Cache only success
+        if result.get("status") == "success":
+            set_cache(cache_key, result)
+
+        return {
+            "source": "api",
+            **result
+        }
+
+    # =========================================
+    # 🧠 EXTENSION LAYER (DO NOT TOUCH CORE)
+    # =========================================
+    def _post_process_videos(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Future enhancements without modifying search_youtube()
+
+        Add here:
+        - ranking
+        - filtering
+        - personalization
+        """
+
+        if result.get("status") != "success":
+            return result
+
+        videos = result.get("videos", [])
+
+        # 🔹 Example ranking logic
+        for v in videos:
+            title = v.get("title", "").lower()
+
+            score = 0
+            if "tutorial" in title:
+                score += 2
+            if "beginner" in title:
+                score += 1
+            if "full course" in title:
+                score += 2
+
+            v["score"] = score
+
+        # 🔹 Sort by score
+        videos.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        result["videos"] = videos
+        return result

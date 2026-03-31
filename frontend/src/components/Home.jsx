@@ -5,7 +5,8 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-import { RotateCw , Bolt} from 'lucide-react';
+import { RotateCw , Bolt, GripVertical} from 'lucide-react';
+import { FaYoutube } from "react-icons/fa";
 import { Document, Page, pdfjs } from "react-pdf"
 import workerSrc from "pdfjs-dist/build/pdf.worker.min?url"
 import { Lightbulb } from "@theme-toggles/react"
@@ -58,6 +59,20 @@ function Home() {
   const iconRef = useRef(null)
   const [position, setPosition] = useState({ top: 0, left: 0 })
 
+  // YouTube panel state
+  const [ytPanelOpen, setYtPanelOpen] = useState(false)
+  const [ytQuery, setYtQuery] = useState("")
+  const [ytLoading, setYtLoading] = useState(false)
+  const [ytResults, setYtResults] = useState(null)
+  const [ytError, setYtError] = useState(null)
+  const ytPanelRef = useRef(null)
+  const chatVideoContainerRef = useRef(null)
+
+  // In-app player state
+  const [inAppVideoUrl, setInAppVideoUrl] = useState(null)
+  const [chatPanelHeight, setChatPanelHeight] = useState(58)
+  const [isDraggingPlayerSplit, setIsDraggingPlayerSplit] = useState(false)
+
   // ADD THESE:
   const [mode, setMode] = useState("single")
   const [singlePage, setSinglePage] = useState(1)
@@ -75,6 +90,13 @@ function Home() {
       const initialTheme = systemDark ? "dark" : "light"
       setTheme(initialTheme)
       document.documentElement.classList.toggle("dark", initialTheme === "dark")
+    }
+  }, [])
+
+  useEffect(() => {
+    const savedVideoUrl = localStorage.getItem("studymate_inapp_video")
+    if (savedVideoUrl) {
+      setInAppVideoUrl(savedVideoUrl)
     }
   }, [])
 
@@ -146,6 +168,38 @@ function Home() {
 
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (inAppVideoUrl) {
+      localStorage.setItem("studymate_inapp_video", inAppVideoUrl)
+    } else {
+      localStorage.removeItem("studymate_inapp_video")
+    }
+  }, [inAppVideoUrl])
+
+  useEffect(() => {
+    if (!isDraggingPlayerSplit) return
+
+    const handlePointerMove = (event) => {
+      const container = chatVideoContainerRef.current
+      if (!container) return
+
+      const rect = container.getBoundingClientRect()
+      const nextHeight = ((event.clientY - rect.top) / rect.height) * 100
+      const clampedHeight = Math.max(25, Math.min(80, nextHeight))
+      setChatPanelHeight(clampedHeight)
+    }
+
+    const stopDragging = () => setIsDraggingPlayerSplit(false)
+
+    window.addEventListener("mousemove", handlePointerMove)
+    window.addEventListener("mouseup", stopDragging)
+
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove)
+      window.removeEventListener("mouseup", stopDragging)
+    }
+  }, [isDraggingPlayerSplit])
 
   // Restore PDF from localStorage on mount
   useEffect(() => {
@@ -368,6 +422,23 @@ useEffect(() => {
       setMessages([])
       localStorage.removeItem("studymate_chat")
     }
+
+  const fetchYoutubeRecommendations = async () => {
+    if (!ytQuery.trim()) return
+    setYtLoading(true)
+    setYtResults(null)
+    setYtError(null)
+    try {
+      const res = await fetch(`http://localhost:8001/youtube?query=${encodeURIComponent(ytQuery)}`)
+      if (!res.ok) throw new Error("Request failed")
+      const data = await res.json()
+      setYtResults(data)
+    } catch (err) {
+      setYtError("Failed to fetch recommendations. Please try again.")
+    } finally {
+      setYtLoading(false)
+    }
+  }
 
   const toggleOpen = (e) => {
       e.stopPropagation()  // prevent the backdrop from catching this click
@@ -1094,7 +1165,14 @@ useEffect(() => {
           <ResizableHandle withHandle />
 
           {/* 🤖 RIGHT PANEL */}
-          <ResizablePanel defaultSize={panelDefaults[1]} minSize={40} className="flex flex-col">
+          <ResizablePanel defaultSize={panelDefaults[1]} minSize={40} className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div ref={chatVideoContainerRef} className="flex h-full min-h-0 flex-col overflow-hidden">
+
+              {/* TOP: header + chat + composer */}
+            <div
+              className="flex min-h-0 flex-col"
+              style={{ flexBasis: inAppVideoUrl ? `${chatPanelHeight}%` : "100%" }}
+            >
 
             {/* HEADER */}
             <div className="border-b border-indigo-100/70 dark:border-white/10 px-6 py-4 flex items-center justify-between">
@@ -1107,6 +1185,203 @@ useEffect(() => {
                 {/* RIGHT */}
                 <div className="flex items-center gap-3">
                   
+                  {/* YouTube Icon Button */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setYtPanelOpen((p) => !p); setYtResults(null); setYtError(null); setYtQuery(""); }}
+                      title="YouTube Recommendations"
+                      className="cursor-pointer text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors"
+                    >
+                      <FaYoutube size={22} />
+                    </button>
+
+                    {/* YouTube Floating Panel */}
+                    {ytPanelOpen && (
+                      <>
+                        {/* Backdrop */}
+                        <div
+                          className="fixed inset-0 z-[9990]"
+                          onClick={() => setYtPanelOpen(false)}
+                        />
+                        <div
+                          ref={ytPanelRef}
+                          className="fixed z-[9991] right-4 top-16 w-[480px] max-h-[80vh] flex flex-col
+                            rounded-2xl shadow-2xl border border-red-100 dark:border-white/10
+                            bg-white dark:bg-zinc-900 overflow-hidden"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Panel Header */}
+                          <div className="shrink-0 px-4 pt-3.5 pb-2.5 border-b border-red-50 dark:border-white/10
+                            bg-red-50/60 dark:bg-white/5 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <FaYoutube className="text-red-500" size={15} />
+                              <span className="text-xs font-semibold text-red-700 dark:text-red-300">
+                                YouTube Recommendations
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => setYtPanelOpen(false)}
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200
+                                transition-colors text-xs leading-none px-1"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* Search Input */}
+                          <div className="shrink-0 px-4 py-3 border-b border-red-50 dark:border-white/10">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={ytQuery}
+                                onChange={(e) => setYtQuery(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") fetchYoutubeRecommendations() }}
+                                placeholder="e.g. Machine Learning in Tamil..."
+                                className="flex-1 text-sm px-3 py-2 rounded-xl
+                                  border border-red-100 dark:border-white/15
+                                  bg-white dark:bg-white/10
+                                  text-slate-800 dark:text-slate-100
+                                  placeholder:text-slate-400 dark:placeholder:text-slate-500
+                                  outline-none focus:ring-2 focus:ring-red-400/40
+                                  transition-all"
+                                autoFocus
+                              />
+                              <button
+                                onClick={fetchYoutubeRecommendations}
+                                disabled={ytLoading || !ytQuery.trim()}
+                                className="shrink-0 px-4 py-2 rounded-xl text-xs font-semibold
+                                  bg-red-500 hover:bg-red-600 active:bg-red-700 disabled:opacity-50
+                                  text-white transition-colors duration-200
+                                  shadow-sm shadow-red-200 dark:shadow-red-900/50"
+                              >
+                                {ytLoading ? "..." : "Search"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Results Area */}
+                          <div className="flex-1 overflow-y-auto min-h-0">
+                            {/* Loading Animation */}
+                            {ytLoading && (
+                              <div className="flex flex-col items-center justify-center gap-3 py-12 px-4">
+                                <div className="flex gap-1.5">
+                                  {[0, 1, 2, 3].map((i) => (
+                                    <div
+                                      key={i}
+                                      className="w-2 h-2 rounded-full bg-red-400"
+                                      style={{
+                                        animation: `bounce 1s ease-in-out ${i * 0.15}s infinite`,
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 animate-pulse">
+                                  AI is finding the best videos for you...
+                                </p>
+                                <style>{`@keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
+                              </div>
+                            )}
+
+                            {/* Error */}
+                            {ytError && !ytLoading && (
+                              <div className="mx-4 my-4 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-600 dark:text-red-400">
+                                {ytError}
+                              </div>
+                            )}
+
+                            {/* Empty prompt */}
+                            {!ytLoading && !ytError && !ytResults && (
+                              <div className="flex flex-col items-center justify-center gap-2 py-12 px-4 text-center">
+                                <FaYoutube className="text-red-300 dark:text-red-700" size={36} />
+                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                  Enter a topic to get AI-curated video recommendations
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Video Results */}
+                            {!ytLoading && ytResults && ytResults.videos && (
+                              <div className="px-3 py-3 space-y-3">
+                                <p className="text-[10px] uppercase tracking-widest text-slate-400 dark:text-slate-500 px-1">
+                                  {ytResults.count} results for "{ytResults.query_used?.replace(/"/g, '')}"
+                                </p>
+                                {ytResults.videos.map((video, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="flex gap-3 p-3 rounded-xl border border-slate-100 dark:border-white/10
+                                      bg-white/80 dark:bg-white/5 hover:bg-red-50/50 dark:hover:bg-white/8
+                                      transition-colors group"
+                                  >
+                                    {/* Thumbnail */}
+                                    <div className="shrink-0 relative w-24 h-16 rounded-lg overflow-hidden bg-slate-100 dark:bg-white/10">
+                                      <img
+                                        src={video.thumbnail}
+                                        alt={video.title}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => { e.target.style.display = 'none' }}
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <FaYoutube className="text-white" size={20} />
+                                      </div>
+                                    </div>
+
+                                    {/* Info */}
+                                    <div className="flex-1 min-w-0 flex flex-col justify-between gap-1">
+                                      <div>
+                                        <p
+                                          className="text-xs font-semibold text-slate-800 dark:text-slate-100 line-clamp-2 leading-snug"
+                                          dangerouslySetInnerHTML={{ __html: video.title }}
+                                        />
+                                        <p className="text-[10px] text-red-500 dark:text-red-400 mt-0.5 font-medium truncate">
+                                          {video.channel}
+                                        </p>
+                                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">
+                                          {video.description}
+                                        </p>
+                                      </div>
+
+                                      {/* Action Buttons */}
+                                      <div className="flex gap-1.5 mt-1">
+                                        <button
+                                          onClick={() => {
+                                            const embedUrl = video.video_url.replace(
+                                              /watch\?v=([\w-]+)/,
+                                              "embed/$1"
+                                            )
+                                            setInAppVideoUrl(embedUrl)
+                                            setYtPanelOpen(false)
+                                          }}
+                                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                                            bg-red-500 hover:bg-red-600 text-white transition-colors"
+                                        >
+                                          <FaYoutube size={10} />
+                                          Watch
+                                        </button>
+                                        <a
+                                          href={video.video_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                                            bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20
+                                            text-slate-700 dark:text-slate-200 transition-colors"
+                                        >
+                                          <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 fill-current" aria-hidden="true">
+                                            <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42L17.59 5H14V3ZM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6h-2v6H5V5Z"/>
+                                          </svg>
+                                          Open Tab
+                                        </a>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
                   {/* Rotate Icon */}
                   <RotateCw onClick={resetChat} className="cursor-pointer text-indigo-600 dark:text-indigo-200 hover:rotate-180 transition-transform duration-300" />
 
@@ -1130,9 +1405,8 @@ useEffect(() => {
 
                 </div>
               </div>
-            
-            
 
+            {/* ── CHAT BODY ── */}
             <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-white/30 to-indigo-50/30 dark:from-white/[0.03] dark:to-white/[0.02]">
               {/* Messages */}
               <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
@@ -1191,7 +1465,6 @@ useEffect(() => {
                 ))}
                 <div ref={chatBottomRef} />
               </div>
-            
 
               {/* Composer */}
               <div className="shrink-0 border-t border-indigo-100/70 dark:border-white/10 p-3 bg-white/50 dark:bg-white/[0.03] backdrop-blur-sm">
@@ -1413,6 +1686,49 @@ useEffect(() => {
               </div>
             </div>
 
+            </div>
+
+              {/* Conditionally render handle + video panel BELOW chat */}
+              {inAppVideoUrl && (
+                <>
+                  <div
+                    role="separator"
+                    aria-orientation="horizontal"
+                    onMouseDown={() => setIsDraggingPlayerSplit(true)}
+                    className="group relative flex h-1.5 w-full shrink-0 cursor-row-resize items-center justify-center bg-indigo-200/80 transition-colors hover:bg-indigo-300/90 dark:bg-white/15 dark:hover:bg-white/25"
+                  >
+                    <div className="z-10 flex h-5 w-8 items-center justify-center rounded-md border border-indigo-300/80 bg-white/90 shadow-sm dark:border-white/20 dark:bg-slate-800/90">
+                      <GripVertical className="h-4 w-4 text-indigo-500 dark:text-indigo-200" />
+                    </div>
+                  </div>
+                  <div className="flex min-h-[240px] flex-1 flex-col">
+                    {/* Video panel header */}
+                    <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-red-100/70 dark:border-white/10 bg-red-50/50 dark:bg-white/5">
+                      <div className="flex items-center gap-2">
+                        <FaYoutube className="text-red-500" size={14} />
+                        <span className="text-xs font-semibold text-red-700 dark:text-red-300">In-App Player</span>
+                      </div>
+                      <button onClick={() => setInAppVideoUrl(null)} title="Close player"
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors text-xs leading-none px-1">
+                        ✕
+                      </button>
+                    </div>
+                    {/* iFrame */}
+                    <div className="flex-1 min-h-0 bg-black">
+                      <iframe
+                        key={inAppVideoUrl}
+                        src={inAppVideoUrl}
+                        title="YouTube In-App Player"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                        className="w-full h-full border-0"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

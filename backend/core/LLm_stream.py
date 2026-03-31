@@ -49,13 +49,28 @@ If the context does not contain the answer, say that the context is insufficient
 <|assistant|>
 """
     return prompt
+
+def count_tokens(text):
+    return int(len(text.split()) * 1.3)  # rough estimate
+
+def get_dynamic_max_tokens(prompt, context_limit=4096, buffer=200):
+    prompt_tokens = count_tokens(prompt)
+    
+    available = context_limit - prompt_tokens - buffer
+    
+    # safety bounds
+    return max(50, min(available, 500))
+
+
 def llm_response(messages,CONTEXT: str = "") :
 
     prompt = build_prompt(messages, CONTEXT)
 
+    max_tokens = get_dynamic_max_tokens(prompt)
+
     stream = model(
         prompt,
-        max_tokens=150,
+        max_tokens=max_tokens,
         temperature=0.3,
         top_p=0.1,
         stop=["<|user|>", "<|system|>"],

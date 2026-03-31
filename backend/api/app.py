@@ -10,6 +10,7 @@ from backend.api.ingest import ingest_document
 from backend.api.retrieve import retrieve_context
 from backend.api.llm import llm_stream
 from backend.api.clear import clear_document
+from backend.api.youtube_video_recommender import llm_recommend
 app = FastAPI(title="Studymate api",version="1.0")
 
 app.add_middleware(
@@ -101,3 +102,6 @@ async def chat(payload: ChatRequest):
         },
     )
 
+@app.get("/youtube")
+async def youtube(query: str):
+    return await llm_recommend(query)
